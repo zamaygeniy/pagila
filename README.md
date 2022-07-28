@@ -1,162 +1,138 @@
-Pagila
-======
+# Task 3. SQL
 
-Pagila is a port of the Sakila example database available for MySQL, which was
-originally developed by Mike Hillyer of the MySQL AB documentation team. It
-is intended to provide a standard schema that can be used for examples in 
-books, tutorials, articles, samples, etc.
-
-Pagila works against PostgreSQL 11 and above.
-
-All the tables, data, views, and functions have been ported; some of the
-changes made were:
-
-* Changed char(1) true/false fields to true boolean fields
-* The last_update columns were set with triggers to update them
-* Added foreign keys
-* Removed 'DEFAULT 0' on foreign keys since it's pointless with real FK's
-* Used PostgreSQL built-in fulltext searching for fulltext index.
-  Removed the need for the film_text table.
-* The rewards_report function was ported to a simple SRF
-
-The schema and data for the Sakila database were made available under the BSD
-license which can be found at
-http://www.opensource.org/licenses/bsd-license.php.
-The pagila database is made available under this license as well.
-
-
-FULLTEXT SEARCH
----------------
-
-Fulltext functionality is built in PostgreSQL, so parts of the schema exist
-in the main schema file. 
-
-Example usage:
-
-SELECT * FROM film WHERE fulltext @@ to_tsquery('fate&india');
-
-
-PARTITIONED TABLES
-------------------
-
-The payment table is designed as a partitioned table with a 6 month timespan
-for the date ranges. 
-If you want to take full advantage of table partitioning, you need to make
-sure constraint_exclusion is turned on in your database. You can do this by
-setting "constraint_exclusion = on" in your postgresql.conf, or by issuing the
-command "ALTER DATABASE pagila SET constraint_exclusion = on" (substitute
-pagila for your database name if installing into a database with a different
-name)
-
-
-INSTALL NOTE
-------------
-
-The pagila-data.sql file and the pagila-insert-data.sql both contain the same
-data, the former using COPY commands, the latter using INSERT commands, so you 
-only need to install one of them. Both formats are provided for those who have
-trouble using one version or another.
-
-VERSION HISTORY
----------------
-
-Version 2.1.0
-* Replace varchar(n) with text (David Fetter)
-* Match foreign key and primary key data type in some tables (Ganeshan Venkataraman)
-* Change CREATE TABLE statement for customer table to use
-    DEFAULT nextval('customer_customer_id_seq'::regclass) for customer_id
-    field instead of SERIAL (Adrian Klaver).
-
-Version 2.0
-* Update schema for newer PostgreSQL versions
-* Remove RULE for partitioning, add trigger support.
-* Update years in sample data. 
-* Remove ARTICLES section from README, all links are dead.
-
-Version 0.10.1
-* Add pagila-data-insert.sql file, added articles section
-
-Version 0.10
-* Support for built-in fulltext. Add enum example 
-
-Version 0.9
-* Add table partitioning example 
-
-Version 0.8 
-* First release of pagila
-
-
-CREATE DATABASE ON [DOCKER](https://docs.docker.com/)
----------------------------
-1. On terminal pull the latest postgres image:
+### 1. Вывести количество фильмов в каждой категории, отсортировать по убыванию.
+```postgresql
+SELECT category.name, 
+       count(*) AS number_of_films
+FROM film
+INNER JOIN film_category
+ON film_category.film_id = film.film_id
+INNER JOIN category
+ON film_category.category_id = category.category_id
+GROUP BY category.name
+ORDER BY number_of_films DESC;
 ```
- docker pull postgres
+![](images/1.png)
+### 2. Вывести 10 актеров, чьи фильмы большего всего арендовали, отсортировать по убыванию.
+```postgresql
+SELECT actor.first_name, 
+       actor.last_name, 
+       count(*) AS number_of_rentals
+FROM rental
+INNER JOIN inventory
+ON rental.inventory_id = inventory.inventory_id
+INNER JOIN film
+ON inventory.film_id = film.film_id
+INNER JOIN film_actor
+ON film.film_id = film_actor.film_id
+INNER JOIN actor
+ON film_actor.actor_id = actor.actor_id
+GROUP BY actor.first_name, actor.last_name
+ORDER BY number_of_rentals DESC
+LIMIT 10;
 ```
-2. Run image:
+![](images/2.png)
+### 3. Вывести категорию фильмов, на которую потратили больше всего денег.
+```postgresql
+SELECT category.name,
+       SUM(payment.amount) AS sum_amount
+FROM payment
+INNER JOIN rental 
+ON payment.rental_id = rental.rental_id
+INNER JOIN inventory
+ON rental.inventory_id = inventory.inventory_id 
+INNER JOIN film
+ON inventory.film_id = film.film_id
+INNER JOIN film_category
+ON film.film_id = film_category.film_id
+INNER JOIN category
+ON film_category.category_id = category.category_id
+GROUP BY category.name
+ORDER BY sum_amount DESC
+LIMIT 1;
 ```
- docker run --name postgres -e POSTGRES_PASSWORD=secret -d postgres
+Вторая версия
+```postgresql
+SELECT *
+FROM sales_by_film_category
+LIMIT 1;
 ```
-3. Run postgres and create the database:
+![](images/3.png)
+### 4. Вывести названия фильмов, которых нет в inventory. Написать запрос без использования оператора IN.
+```postgresql
+SELECT title 
+FROM film 
+LEFT JOIN inventory 
+ON film.film_id = inventory.film_id
+WHERE inventory_id IS NULL;
 ```
-docker exec -it postgres psql -U postgres
+![](images/4.png)
+### 5. Вывести топ 3 актеров, которые больше всего появлялись в фильмах в категории “Children”. Если у нескольких актеров одинаковое кол-во фильмов, вывести всех.
+```postgresql
+SELECT first_name, last_name, name, counter
+FROM
+    (SELECT actor.first_name, actor.last_name,  category.name, count(*) AS counter,
+     DENSE_RANK() OVER(ORDER BY count(*) desc) AS rank
+     FROM actor
+     INNER JOIN film_actor
+     ON film_actor.actor_id = actor.actor_id
+     INNER JOIN film
+     ON film_actor.film_id = film.film_id
+     INNER JOIN film_category
+     ON film.film_id = film_category.film_id
+     INNER JOIN category
+     ON film_category.category_id = category.category_id
+     WHERE category.name = 'Children'
+     GROUP BY actor.first_name, actor.last_name, category.name
+    ) AS rs
+WHERE rank <= 3;
 ```
+![](images/5.png)
+### 6. Вывести города с количеством активных и неактивных клиентов (активный — customer.active = 1). Отсортировать по количеству неактивных клиентов по убыванию.
+```postgresql
+SELECT city, 
+       count(case active when 1 then 1 else null end) as active_per_city,
+       count(case active when 0 then 1 else null end) as inactive_per_city
+FROM address
+INNER JOIN customer
+ON customer.address_id = address.address_id
+INNER JOIN city
+ON city.city_id = address.city_id
+GROUP BY city
+ORDER BY inactive_per_city DESC;
 ```
-psql (13.1 (Debian 13.1-1.pgdg100+1))
-Type "help" for help.
-
-postgres=# CREATE DATABASE pagila;
-postgres-# CREATE DATABASE
-postgres=\q
+![](images/6.png)
+### 7. Вывести категорию фильмов, у которой самое большое кол-во часов суммарной аренды в городах (customer.address_id в этом city), и которые начинаются на букву “a”. То же самое сделать для городов в которых есть символ “-”. Написать все в одном запросе.
+```postgresql
+SELECT city, 
+       name,
+       sum_length
+FROM
+    (SELECT city, 
+            name, 
+            SUM(length) as sum_length, 
+            RANK() OVER (PARTITION BY city  ORDER BY SUM(length) DESC) as rank
+     FROM rental
+     INNER JOIN customer
+     ON rental.customer_id = customer.customer_id
+     INNER JOIN address
+     ON customer.address_id = address.address_id
+     INNER JOIN city
+     ON address.city_id = city.city_id
+     INNER JOIN inventory
+     ON rental.inventory_id = inventory.inventory_id
+     INNER JOIN film
+     ON inventory.film_id = film.film_id
+     INNER JOIN film_category
+     ON film.film_id = film_category.film_id
+     INNER JOIN category
+     ON film_category.film_id = category.category_id
+     GROUP BY city, name
+     HAVING city LIKE 'A%'
+     OR city LIKE 'a%'
+     OR city LIKE '%-%'
+    ) AS rs
+WHERE rank = 1
+ORDER BY city;
 ```
-
-4. Create all schema objetcs (tables, etc) replace ```<local-repo>``` by your local directory :
-
-```
-cat <local-repo>/pagila-schema.sql | docker exec -i postgres psql -U postgres -d pagila
-```
-
-5. Insert all data:
-```
-cat <local-repo>/pagila-data.sql | docker exec -i postgres psql -U postgres -d pagila
-```
-
-6. Done! Just use:
-```
-docker exec -it postgres psql -U postgres
-```
-````
-postgres
-psql (13.1 (Debian 13.1-1.pgdg100+1))
-Type "help" for help.
-
-postgres=# \c pagila
-You are now connected to database "pagila" as user "postgres".
-pagila=# \dt
-                    List of relations
- Schema |       Name       |       Type        |  Owner
---------+------------------+-------------------+----------
- public | actor            | table             | postgres
- public | address          | table             | postgres
- public | category         | table             | postgres
- public | city             | table             | postgres
- public | country          | table             | postgres
- public | customer         | table             | postgres
- public | film             | table             | postgres
- public | film_actor       | table             | postgres
- public | film_category    | table             | postgres
- public | inventory        | table             | postgres
- public | language         | table             | postgres
- public | payment          | partitioned table | postgres
- public | payment_p2020_01 | table             | postgres
- public | payment_p2020_02 | table             | postgres
- public | payment_p2020_03 | table             | postgres
- public | payment_p2020_04 | table             | postgres
- public | payment_p2020_05 | table             | postgres
- public | payment_p2020_06 | table             | postgres
- public | rental           | table             | postgres
- public | staff            | table             | postgres
- public | store            | table             | postgres
-(21 rows)
-
-pagila=#
-```
+![](images/7.png)
